@@ -1,198 +1,125 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useApp } from "@/lib/store";
-import { ISSUES } from "@/lib/mock-data";
+import { getPerms } from "@/lib/auth";
 import { fmtDate } from "@/lib/utils";
+import { useIssues } from "@/lib/use-product-api";
+import { issuesApi, IssueStatus } from "@/lib/api/client";
+import { LoadingRows, ErrorBanner, ProductBanner } from "@/components/ui/data-state";
 
-type IssueStatus = "TODO" | "IN_PROGRESS" | "DONE" | "CANCELED";
-const STATUS_OPTS = ["All", "TODO", "IN_PROGRESS", "DONE", "CANCELED"];
-const PRIO_OPTS   = ["All", "High", "Medium", "Low"];
-
-const statusColor: Record<string, string>  = { TODO: "badge-amber", IN_PROGRESS: "badge-blue", DONE: "badge-green", CANCELED: "badge-gray" };
-const statusLabel: Record<string, string>  = { TODO: "TODO", IN_PROGRESS: "In Progress", DONE: "Done", CANCELED: "Canceled" };
-const prioColor: Record<string, string>    = { High: "badge-red", Medium: "badge-amber", Low: "badge-indigo" };
-const NEXT_STATUS: Record<IssueStatus, IssueStatus[]> = {
-  TODO: ["IN_PROGRESS", "CANCELED"],
-  IN_PROGRESS: ["DONE", "CANCELED"],
-  DONE: [],
-  CANCELED: [],
+const PRIORITY_CLS: Record<string,string> = { High:"badge-red", Medium:"badge-amber", Low:"badge-green" };
+const STATUS_META: Record<string,{cls:string;label:string;dot:string}> = {
+  TODO:        { cls:"badge-amber", label:"To Do",       dot:"#F59E0B" },
+  IN_PROGRESS: { cls:"badge-blue",  label:"In Progress", dot:"#2563EB" },
+  DONE:        { cls:"badge-green", label:"Done",        dot:"#10B981" },
+  CANCELED:    { cls:"badge-gray",  label:"Canceled",    dot:"#94A3B8" },
 };
+const TABS = ["All","TODO","IN_PROGRESS","DONE","CANCELED"];
+const TAB_LABELS: Record<string,string> = { All:"All", TODO:"To Do", IN_PROGRESS:"In Progress", DONE:"Done", CANCELED:"Canceled" };
 
 export default function IssuesPage() {
-  const { user } = useApp();
+  const { user, product } = useApp();
   if (!user) return null;
-  const [issues, setIssues]   = useState(ISSUES);
-  const [search, setSearch]   = useState("");
-  const [status, setStatus]   = useState("All");
-  const [prio, setPrio]       = useState("All");
-  const [selected, setSelected] = useState<string | null>(null);
+  const perms = getPerms(user.role);
+  const [tab,      setTab]      = useState("All");
+  const [updating, setUpdating] = useState<string | null>(null);
 
-  const filtered = issues.filter(i => {
-    const q = search.toLowerCase();
-    const ms = !q || i.subject.toLowerCase().includes(q) || i.customer.toLowerCase().includes(q) || i.id.toLowerCase().includes(q);
-    const mst = status === "All" || i.status === status;
-    const mp  = prio === "All" || i.priority === prio;
-    return ms && mst && mp;
-  });
+  const params = useMemo(() => tab !== "All" ? { status: tab } : {}, [tab]);
+  const { data: raw, loading, error, refetch } = useIssues(params);
 
-  function updateStatus(id: string, newStatus: IssueStatus) {
-    setIssues(prev => prev.map(i => i.id === id ? { ...i, status: newStatus } : i));
+  const allIssues = Array.isArray(raw) ? raw : ((raw as any)?.data ?? []);
+  const filtered  = tab === "All" ? allIssues : allIssues.filter((i: any) => i.status === tab);
+
+  const counts = TABS.reduce((acc, t) => {
+    acc[t] = t === "All" ? allIssues.length : allIssues.filter((i: any) => i.status === t).length;
+    return acc;
+  }, {} as Record<string, number>);
+
+  async function updateStatus(id: string, status: IssueStatus) {
+    setUpdating(id);
+    // Call real API — refetch on success
+    const result = await issuesApi.updateStatus(product, id, status);
+    if (!result.error) {
+      await refetch();
+    }
+    setUpdating(null);
   }
 
-  const selectedIssue = selected ? issues.find(i => i.id === selected) : null;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <div className="animate-fade-up" style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
         <div>
-          <h1 style={{ fontFamily: "'Sora',sans-serif", fontSize: 22, fontWeight: 700, color: "#0D1B3E", marginBottom: 4 }}>Support Issues</h1>
-          <p style={{ color: "#8A97B0", fontSize: 14 }}>{filtered.length} issues · manage & update ticket status</p>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+            <h1 style={{ fontFamily:"'Sora',sans-serif", fontSize:"clamp(18px,4vw,24px)", fontWeight:700, color:"var(--text)", margin:0 }}>Support Issues</h1>
+            <ProductBanner product={product} loading={loading} />
+          </div>
+          <p style={{ color:"var(--text-3)", fontSize:13.5 }}>
+            {allIssues.filter((i: any) => i.status === "TODO" || i.status === "IN_PROGRESS").length} open issues — {product === "durapayment" ? "DuraPayment" : product === "durapay" ? "DuraPay" : "DuraBiz"}
+          </p>
         </div>
-        <button className="btn btn-primary btn-sm">+ New Issue</button>
+        {perms.canManageIssues && (
+          <button className="btn btn-primary btn-sm">+ New Issue</button>
+        )}
       </div>
 
-      {/* Status summary */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
-        {[
-          { label: "TODO",        count: issues.filter(i=>i.status==="TODO").length,        color: "#F59E0B", bg: "#FFFBEB" },
-          { label: "In Progress", count: issues.filter(i=>i.status==="IN_PROGRESS").length, color: "#2563EB", bg: "#EFF6FF" },
-          { label: "Done",        count: issues.filter(i=>i.status==="DONE").length,        color: "#10B981", bg: "#ECFDF5" },
-          { label: "Canceled",    count: issues.filter(i=>i.status==="CANCELED").length,    color: "#EF4444", bg: "#FEF2F2" },
-        ].map(s => (
-          <div key={s.label} className="card" style={{ padding: "16px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
-            onClick={() => setStatus(s.label === "In Progress" ? "IN_PROGRESS" : s.label.toUpperCase() === s.label ? s.label : s.label.toUpperCase())}>
-            <div style={{ width: 38, height: 38, borderRadius: 10, background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Sora',sans-serif", fontWeight: 800, fontSize: 16, color: s.color, flexShrink: 0 }}>{s.count}</div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#4A5568" }}>{s.label}</span>
-          </div>
+      {error && <ErrorBanner message={error} onRetry={refetch} />}
+
+      {/* Tabs */}
+      <div className="animate-fade-up stagger-1" style={{ display:"flex", gap:4, flexWrap:"wrap", background:"var(--surface)", borderRadius:12, padding:4, border:"1px solid var(--border)", width:"fit-content" }}>
+        {TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{ padding:"7px 13px", borderRadius:9, border:"none", cursor:"pointer", fontSize:12, fontWeight:tab===t?600:400, transition:"all 0.15s", background:tab===t?"var(--text)":"transparent", color:tab===t?"#fff":"var(--text-2)", display:"flex", alignItems:"center", gap:5 }}>
+            {TAB_LABELS[t]}
+            <span style={{ background:tab===t?"rgba(255,255,255,0.2)":"var(--surface-2)", color:tab===t?"#fff":"var(--text-3)", borderRadius:20, padding:"0 6px", fontSize:10, fontWeight:700 }}>{counts[t]??0}</span>
+          </button>
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: selectedIssue ? "1fr 380px" : "1fr", gap: 20, alignItems: "start" }}>
-        {/* Table */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F4", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ position: "relative", flex: "1 1 200px" }}>
-              <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#B0BAD0" }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              </span>
-              <input className="inp" placeholder="Search issues…" value={search} onChange={e => setSearch(e.target.value)}
-                style={{ paddingLeft: 32, paddingTop: 8, paddingBottom: 8, fontSize: 13 }} />
-            </div>
-            <select className="inp" value={status} onChange={e => setStatus(e.target.value)} style={{ maxWidth: 140, paddingTop: 8, paddingBottom: 8, fontSize: 13, cursor: "pointer" }}>
-              {STATUS_OPTS.map(s => <option key={s} value={s}>{s === "IN_PROGRESS" ? "In Progress" : s}</option>)}
-            </select>
-            <select className="inp" value={prio} onChange={e => setPrio(e.target.value)} style={{ maxWidth: 120, paddingTop: 8, paddingBottom: 8, fontSize: 13, cursor: "pointer" }}>
-              {PRIO_OPTS.map(p => <option key={p}>{p}</option>)}
-            </select>
+      {/* Issue cards */}
+      <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+        {loading && allIssues.length === 0 ? (
+          <div className="card" style={{ padding:0, overflow:"hidden" }}><LoadingRows rows={4} cols={3} /></div>
+        ) : filtered.length === 0 ? (
+          <div className="card" style={{ textAlign:"center", padding:48 }}>
+            <div style={{ fontSize:36, marginBottom:10 }}>✅</div>
+            <p style={{ color:"var(--text-3)", fontSize:14 }}>No issues in this category</p>
           </div>
-          <div className="table-wrap">
-            <table className="data-tbl">
-              <thead>
-                <tr>
-                  <th>Issue</th>
-                  <th>Customer</th>
-                  <th>Product</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: "center", padding: "40px", color: "#B0BAD0" }}>No issues found</td></tr>
-                ) : filtered.map(iss => (
-                  <tr key={iss.id} style={{ cursor: "pointer" }} onClick={() => setSelected(iss.id === selected ? null : iss.id)}>
-                    <td>
-                      <div style={{ fontFamily: "monospace", fontSize: 11, color: "#2563EB", marginBottom: 2 }}>{iss.id}</div>
-                      <div style={{ fontSize: 12.5, fontWeight: 500, color: "#0D1B3E", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{iss.subject}</div>
-                    </td>
-                    <td style={{ fontSize: 12.5, color: "#4A5568" }}>{iss.customer}</td>
-                    <td><span className="badge badge-blue" style={{ fontSize: 11 }}>{iss.product}</span></td>
-                    <td><span className={`badge ${prioColor[iss.priority] ?? "badge-gray"}`}>{iss.priority}</span></td>
-                    <td><span className={`badge ${statusColor[iss.status] ?? "badge-gray"}`}>{statusLabel[iss.status]}</span></td>
-                    <td style={{ fontSize: 11, color: "#B0BAD0" }}>{fmtDate(iss.date)}</td>
-                    <td onClick={e => e.stopPropagation()}>
-                      <div style={{ display: "flex", gap: 5 }}>
-                        {NEXT_STATUS[iss.status as IssueStatus]?.map(ns => (
-                          <button key={ns} className="btn btn-secondary btn-sm"
-                            onClick={() => updateStatus(iss.id, ns)}
-                            style={{ fontSize: 10.5, padding: "4px 8px", background: ns === "DONE" ? "#ECFDF5" : ns === "CANCELED" ? "#FEF2F2" : undefined, color: ns === "DONE" ? "#10B981" : ns === "CANCELED" ? "#EF4444" : undefined }}>
-                            {statusLabel[ns]}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Detail panel */}
-        {selectedIssue && (
-          <div className="card animate-slide-in" style={{ position: "sticky", top: 80 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 15, fontWeight: 700, color: "#0D1B3E" }}>Issue Detail</span>
-              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#8A97B0", fontSize: 18 }}>✕</button>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Issue ID</p>
-                <p style={{ fontFamily: "monospace", fontSize: 14, color: "#2563EB", fontWeight: 700 }}>{selectedIssue.id}</p>
-              </div>
-              <div>
-                <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Subject</p>
-                <p style={{ fontSize: 14, color: "#0D1B3E", fontWeight: 500, lineHeight: 1.5 }}>{selectedIssue.subject}</p>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Customer</p>
-                  <p style={{ fontSize: 13, color: "#0D1B3E", fontWeight: 500 }}>{selectedIssue.customer}</p>
-                  <p style={{ fontSize: 11, color: "#B0BAD0" }}>{selectedIssue.email}</p>
-                </div>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Product</p>
-                  <span className="badge badge-blue">{selectedIssue.product}</span>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Priority</p>
-                  <span className={`badge ${prioColor[selectedIssue.priority]}`}>{selectedIssue.priority}</span>
-                </div>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Status</p>
-                  <span className={`badge ${statusColor[selectedIssue.status]}`}>{statusLabel[selectedIssue.status]}</span>
-                </div>
-              </div>
-              {selectedIssue.assignee && (
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Assignee</p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 7, background: "#ECFDF5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#10B981" }}>
-                      {selectedIssue.assignee.split(" ").map(n=>n[0]).join("")}
-                    </div>
-                    <span style={{ fontSize: 13, color: "#4A5568" }}>{selectedIssue.assignee}</span>
+        ) : filtered.map((issue: any, i: number) => {
+          const sm = STATUS_META[issue.status] ?? STATUS_META.TODO;
+          return (
+            <div key={issue.id} className={`card animate-fade-up stagger-${Math.min(i+2,6)}`} style={{ padding:"15px 18px" }}>
+              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+                <div style={{ flex:1, minWidth:220 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:7, flexWrap:"wrap" }}>
+                    <span style={{ fontFamily:"monospace", fontSize:11.5, color:"var(--text-3)", fontWeight:600 }}>{issue.id}</span>
+                    <span className={`badge ${PRIORITY_CLS[issue.priority]??"badge-gray"}`}>{issue.priority}</span>
+                    <span className={`badge ${sm.cls}`}><span style={{ width:5,height:5,borderRadius:"50%",background:sm.dot,display:"inline-block" }}/> {sm.label}</span>
+                    <span className="badge badge-blue">{issue.product}</span>
+                  </div>
+                  <p style={{ fontWeight:600, color:"var(--text)", fontSize:13.5, marginBottom:7 }}>{issue.subject}</p>
+                  <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:12, color:"var(--text-3)" }}>👤 {issue.customer}</span>
+                    {issue.assignee && <span style={{ fontSize:12, color:"var(--text-3)" }}>🛡️ {issue.assignee}</span>}
+                    <span style={{ fontSize:11.5, color:"var(--text-3)" }}>{fmtDate(issue.date, "long")}</span>
                   </div>
                 </div>
-              )}
-              <div style={{ borderTop: "1px solid #E2E8F4", paddingTop: 14 }}>
-                <p style={{ fontSize: 11, fontWeight: 700, color: "#B0BAD0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Update Status</p>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {(["TODO","IN_PROGRESS","DONE","CANCELED"] as IssueStatus[]).map(s => (
-                    <button key={s} onClick={() => updateStatus(selectedIssue.id, s)}
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: 11, background: selectedIssue.status === s ? "#0D1B3E" : undefined, color: selectedIssue.status === s ? "#fff" : undefined }}>
-                      {statusLabel[s]}
+                {perms.canManageIssues && issue.status !== "DONE" && issue.status !== "CANCELED" && (
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    {issue.status === "TODO" && (
+                      <button disabled={updating === issue.id} onClick={() => updateStatus(issue.id, "IN_PROGRESS")}
+                        className="btn btn-secondary btn-sm" style={{ fontSize:11.5 }}>
+                        → In Progress
+                      </button>
+                    )}
+                    <button disabled={updating === issue.id} onClick={() => updateStatus(issue.id, "DONE")}
+                      className="btn btn-sm" style={{ background:"var(--green-bg)", color:"var(--green)", border:"1px solid var(--green)", fontSize:11.5, borderRadius:8 }}>
+                      {updating === issue.id ? "…" : "✓ Resolve"}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );
