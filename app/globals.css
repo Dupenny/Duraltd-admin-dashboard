@@ -222,7 +222,7 @@ h6 {
   color: var(--text);
 }
 .nav-item.active {
-  background: var(--accent);
+  background: var(--text);
   color: #fff;
 }
 .nav-item.active svg {
