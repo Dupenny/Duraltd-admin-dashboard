@@ -306,7 +306,7 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      {/* Upgrade card */}
+      {/* Upgrade card
       <div style={{ padding: "0 10px 10px", flexShrink: 0 }}>
         <div
           style={{
@@ -350,7 +350,7 @@ export function DashboardSidebar({
             Upgrade Now →
           </button>
         </div>
-      </div>
+      </div> */}
 
       {/* Logout */}
       <div style={{ padding: "0 10px 14px", flexShrink: 0 }}>
