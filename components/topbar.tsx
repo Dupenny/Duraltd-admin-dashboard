@@ -174,17 +174,6 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
               </span>
             ))}
           </div>
-          <h1
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: "var(--text)",
-              lineHeight: 1,
-              margin: 0,
-              fontFamily: "'Sora',sans-serif",
-            }}>
-            {meta.title}
-          </h1>
         </div>
 
         {/* Desktop search */}
