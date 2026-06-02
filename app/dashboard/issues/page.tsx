@@ -24,7 +24,7 @@ export default function IssuesPage() {
   const [tab,      setTab]      = useState("All");
   const [updating, setUpdating] = useState<string | null>(null);
 
-  const params = useMemo(() => tab !== "All" ? { status: tab } : {}, [tab]);
+  const params = useMemo(() => tab !== "All" ? { status: tab } : undefined, [tab]);
   const { data: raw, loading, error, refetch } = useIssues(params);
 
   const allIssues = Array.isArray(raw) ? raw : ((raw as any)?.data ?? []);
